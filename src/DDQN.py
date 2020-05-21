@@ -10,11 +10,12 @@ import numpy as np
 from model import model
 from ReplayMemory import ReplayMemory, Transition
 
+random.seed(0)
+
 class DDQN():
-    def __init__(self, state_num, action_num, device, CONFIG):
+    def __init__(self, state_num, action_num, device, CONFIG, action_list):
         
-        self.action_list = np.linspace(-2, 2, num=action_num, endpoint=True).reshape(-1,1)
-        print(self.action_list.reshape(-1))
+        self.action_list = action_list
         self.memory = ReplayMemory(CONFIG.MEMORY_CAPACITY)
         
         #== ENV PARAM ==
@@ -27,15 +28,19 @@ class DDQN():
         self.eps_end = CONFIG.EPSILON_END
         self.decay = CONFIG.MAX_EP_STEPS
         
-        self.LR_A = CONFIG.LR_A
-        self.LR_A_start = CONFIG.LR_A
-        self.LR_A_end = CONFIG.LR_A_END
-        self.LR_A_decay = CONFIG.MAX_EP_STEPS * CONFIG.MAX_EPISODES / 2
+        self.LR_C = CONFIG.LR_C
+        self.LR_C_start = CONFIG.LR_C
+        self.LR_C_end = CONFIG.LR_C_END
+        self.LR_C_decay = CONFIG.MAX_EP_STEPS * CONFIG.MAX_EPISODES / 2
         
         self.BATCH_SIZE = CONFIG.BATCH_SIZE
         self.GAMMA = CONFIG.GAMMA
         self.MAX_MODEL = CONFIG.MAX_MODEL
+
+        #== Target Network Update ==
         self.TAU = CONFIG.TAU
+        self.HARD_UPDATE = CONFIG.HARD_UPDATE
+        self.SOFT_UPDATE = CONFIG.SOFT_UPDATE
         
         #== DQN ==
         self.double = CONFIG.DOUBLE
@@ -48,18 +53,21 @@ class DDQN():
         if self.device == torch.device('cuda'):
             self.Q_network.cuda()
             self.target_network.cuda()
-        self.optimizer = optim.Adam(self.Q_network.parameters(), lr=self.LR_A)
+        self.optimizer = optim.Adam(self.Q_network.parameters(), lr=self.LR_C)
         self.max_grad_norm = 0.5
         self.training_step = 0
     
     def update_target_network(self):
-        # Q_target <- Q_policy
-        #self.target_network.load_state_dict(self.Q_network.state_dict())
-        #== soft update ==
-        for module_tar, module_pol in zip(self.target_network.modules(), self.Q_network.modules()):
-            if isinstance(module_tar, nn.Linear):
-                module_tar.weight.data = (1-self.TAU)*module_tar.weight.data + self.TAU*module_pol.weight.data
-                module_tar.bias.data   = (1-self.TAU)*module_tar.bias.data   + self.TAU*module_pol.bias.data
+        if self.SOFT_UPDATE:
+            # Soft Replace
+            for module_tar, module_pol in zip(self.target_network.modules(), self.Q_network.modules()):
+                if isinstance(module_tar, nn.Linear):
+                    module_tar.weight.data = (1-self.TAU)*module_tar.weight.data + self.TAU*module_pol.weight.data
+                    module_tar.bias.data   = (1-self.TAU)*module_tar.bias.data   + self.TAU*module_pol.bias.data
+        elif self.training_step % self.HARD_UPDATE == 0:
+            # Hard Replace
+            self.target_network.load_state_dict(self.Q_network.state_dict())
+        
          
     def update_Q_network(self):
         if len(self.memory) < self.BATCH_SIZE*20:
@@ -76,17 +84,11 @@ class DDQN():
         
         non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.s_)), 
                                       device=self.device, dtype=torch.bool)
-        non_final_state_nxt = torch.FloatTensor([s for s in batch.s_
-                                                     if s is not None])
-        state = torch.FloatTensor(batch.s)
-        action = torch.LongTensor(batch.a).view(-1,1)
-        reward = torch.FloatTensor(batch.r)
-        
-        if self.device == torch.device('cuda'):
-            state = state.cuda()
-            action = action.cuda()
-            non_final_state_nxt = non_final_state_nxt.cuda()
-            reward = reward.cuda()
+        non_final_state_nxt = torch.FloatTensor([s for s in batch.s_ if s is not None], 
+                                                 device=self.device)
+        state = torch.FloatTensor(batch.s, device=self.device)
+        action = torch.LongTensor(batch.a, device=self.device).view(-1,1)
+        reward = torch.FloatTensor(batch.r, device=self.device)
         
         #== get Q(s,a) ==
         # gather reguires idx to be Long, i/p and idx should have the same shape with only diff at the dim we want to extract value
@@ -117,23 +119,21 @@ class DDQN():
         #nn.utils.clip_grad_norm_(self.Q_network.parameters(), self.max_grad_norm)
         self.optimizer.step()
         
-        #== Hard Replace ==
-        if self.training_step % 200 == 0:
-            self.target_network.load_state_dict(self.Q_network.state_dict())
-        #self.update_target_network()
+        #== Update Target Network ==
+        self.update_target_network()
         
         #== Hyper-Parameter Update ==
         self.epsilon = self.eps_end + (self.eps_start - self.eps_end) * \
                                        np.exp(-1. * self.training_step / self.decay)
-        self.LR_A = self.LR_A_end + (self.LR_A_start - self.LR_A_end) * \
-                                     np.exp(-1. * self.training_step / self.LR_A_decay)
+        self.LR_C = self.LR_C_end + (self.LR_C_start - self.LR_C_end) * \
+                                     np.exp(-1. * self.training_step / self.LR_C_decay)
 
         return state_action_values.mean().item()
 
     def select_action(self, state):
         state = torch.from_numpy(state).float().unsqueeze(0)
-        if np.random.random() < self.epsilon:
-            action_index = np.random.randint(self.action_num)
+        if random.random() < self.epsilon:
+            action_index = random.randint(0, self.action_num-1)
         else:
             action_index = self.Q_network(state).max(1)[1].item()
         return self.action_list[action_index], action_index

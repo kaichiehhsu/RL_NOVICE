@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn             
-                
+
 class model(nn.Module):
     
     def __init__(self, state_num, action_num):
@@ -25,3 +25,5 @@ class model(nn.Module):
             if isinstance(m, nn.Linear):
                 m.weight.data.normal_(0, 1)
                 m.bias.data.zero_()
+
+
