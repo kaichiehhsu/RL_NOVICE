@@ -6,7 +6,7 @@ class config():
                         LR_C=1e-3, LR_C_END=1e-4,
                         EPSILON=0.9, EPSILON_END=5e-2,
                         GAMMA=0.9, 
-                        TAU=0.01, HARD_UPDATE=200, SOFT_UPDATE=False,
+                        TAU=0.01, HARD_UPDATE=200, SOFT_UPDATE=True,
                         MEMORY_CAPACITY=10000,
                         BATCH_SIZE=32,
                         RENDER=False,                         

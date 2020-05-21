@@ -4,12 +4,14 @@ from torch.nn.functional import mse_loss, smooth_l1_loss
 from torch.autograd import Variable
 import torch.optim as optim
 
+from collections import namedtuple
 import random
 import numpy as np
 
 from model import model
-from ReplayMemory import ReplayMemory, Transition
+from ReplayMemory import ReplayMemory
 
+Transition = namedtuple('Transition', ['s', 'a', 'r', 's_'])
 random.seed(0)
 
 class DDQN():
@@ -69,7 +71,7 @@ class DDQN():
             self.target_network.load_state_dict(self.Q_network.state_dict())
         
          
-    def update_Q_network(self):
+    def update(self):
         if len(self.memory) < self.BATCH_SIZE*20:
         #if not self.memory.isfull:
             return
@@ -103,10 +105,10 @@ class DDQN():
         state_value_nxt = torch.zeros(self.BATCH_SIZE, device=self.device)
         with torch.no_grad():
             if self.double:
-                Q_tmp = self.target_network(non_final_state_nxt)
+                Q_expect = self.target_network(non_final_state_nxt)
             else:
-                Q_tmp = self.Q_network(non_final_state_nxt)
-        state_value_nxt[non_final_mask] = Q_tmp.gather(1, action_nxt).view(-1)
+                Q_expect = self.Q_network(non_final_state_nxt)
+        state_value_nxt[non_final_mask] = Q_expect.gather(1, action_nxt).view(-1)
         expected_state_action_values = (state_value_nxt * self.GAMMA) + reward
         
         #== regression Q(s, a) -> y ==
@@ -128,7 +130,7 @@ class DDQN():
         self.LR_C = self.LR_C_end + (self.LR_C_start - self.LR_C_end) * \
                                      np.exp(-1. * self.training_step / self.LR_C_decay)
 
-        return state_action_values.mean().item()
+        return loss.item()
 
     def select_action(self, state):
         state = torch.from_numpy(state).float().unsqueeze(0)
