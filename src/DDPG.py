@@ -71,12 +71,11 @@ class DDPG():
         self.MAX_MODEL = CONFIG.MAX_MODEL
 
         #== CRITIC TARGET UPDATE PARAM ==
-        '''
         self.double = CONFIG.DOUBLE
         self.TAU = CONFIG.TAU
         self.HARD_UPDATE = CONFIG.HARD_UPDATE
         self.SOFT_UPDATE = CONFIG.SOFT_UPDATE
-        '''
+
         #== MODEL PARAM ==
         self.device = device
         
@@ -86,18 +85,18 @@ class DDPG():
 
     def build_network(self):
         self.critic        = critic(self.state_dim, self.action_dim)
-        #self.critic_target = critic(self.state_dim, self.action_dim)
+        self.critic_target = critic(self.state_dim, self.action_dim)
         self.actor         = actor(self.state_dim,  self.action_dim)
         if self.device == torch.device('cuda'):
             self.critic.cuda()
-            #self.critic_target.cuda()
+            self.critic_target.cuda()
             self.actor.cuda()
 
         #== Optimizer ==
         self.critic_opt = optim.Adam(self.critic.parameters(), lr=self.LR_C)
         self.actor_opt  = optim.Adam(self.actor.parameters(),  lr=self.LR_A)
         self.training_step = 0
-    '''
+
     def update_critic_target(self):
         if self.SOFT_UPDATE:
             #== Soft Replace ==
@@ -108,7 +107,7 @@ class DDPG():
         elif self.training_step % self.HARD_UPDATE == 0:
             #== Hard Replace ==
             self.critic_target.load_state_dict(self.critic.state_dict())
-    '''
+
     def update(self):
         if len(self.memory) < self.BATCH_SIZE*20:
         #if not self.memory.isfull:
@@ -141,7 +140,7 @@ class DDPG():
         #== get expected value: y = r + gamma * Q_w' (s',a') ==
         state_value_nxt = torch.zeros(self.BATCH_SIZE, device=self.device)
         with torch.no_grad():
-            Q_expect = self.critic(non_final_state_nxt, action_nxt).view(-1)
+            Q_expect = self.critic_target(non_final_state_nxt, action_nxt).view(-1)
         state_value_nxt[non_final_mask] = Q_expect
         expected_state_action_values = (state_value_nxt * self.GAMMA) + reward
 
@@ -152,7 +151,7 @@ class DDPG():
         self.critic_opt.step()
         
         #== Update Critic Target ==
-        #self.update_critic_target()
+        self.update_critic_target()
           
         #==================
         #== Update Actor ==
