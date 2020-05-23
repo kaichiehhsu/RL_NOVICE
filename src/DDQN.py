@@ -12,7 +12,6 @@ from model import model
 from ReplayMemory import ReplayMemory
 
 Transition = namedtuple('Transition', ['s', 'a', 'r', 's_'])
-random.seed(0)
 
 class DDQN():
     def __init__(self, state_num, action_num, device, CONFIG, action_list):
@@ -25,15 +24,15 @@ class DDQN():
         self.action_num = action_num
         
         #== PARAM ==
-        self.epsilon = CONFIG.EPSILON
-        self.eps_start = CONFIG.EPSILON
-        self.eps_end = CONFIG.EPSILON_END
-        self.decay = CONFIG.MAX_EP_STEPS
+        self.EPSILON = CONFIG.EPSILON
+        self.EPS_START = CONFIG.EPSILON
+        self.EPS_END = CONFIG.EPSILON_END
+        self.EPS_DECAY = CONFIG.MAX_EP_STEPS
         
         self.LR_C = CONFIG.LR_C
-        self.LR_C_start = CONFIG.LR_C
-        self.LR_C_end = CONFIG.LR_C_END
-        self.LR_C_decay = CONFIG.MAX_EP_STEPS * CONFIG.MAX_EPISODES / 2
+        self.LR_C_START = CONFIG.LR_C
+        self.LR_C_END = CONFIG.LR_C_END
+        self.LR_C_DECAY = CONFIG.MAX_EP_STEPS * CONFIG.MAX_EPISODES / 2
         
         self.BATCH_SIZE = CONFIG.BATCH_SIZE
         self.GAMMA = CONFIG.GAMMA
@@ -125,16 +124,16 @@ class DDQN():
         self.update_target_network()
         
         #== Hyper-Parameter Update ==
-        self.epsilon = self.eps_end + (self.eps_start - self.eps_end) * \
-                                       np.exp(-1. * self.training_step / self.decay)
-        self.LR_C = self.LR_C_end + (self.LR_C_start - self.LR_C_end) * \
-                                     np.exp(-1. * self.training_step / self.LR_C_decay)
+        self.EPSILON = self.EPS_END + (self.EPS_START - self.EPS_END) * \
+                                       np.exp(-1. * self.training_step / self.EPS_DECAY)
+        self.LR_C = self.LR_C_END + (self.LR_C_START - self.LR_C_END) * \
+                                     np.exp(-1. * self.training_step / self.LR_C_DECAY)
 
         return loss.item()
 
     def select_action(self, state):
         state = torch.from_numpy(state).float().unsqueeze(0)
-        if random.random() < self.epsilon:
+        if random.random() < self.EPSILON:
             action_index = random.randint(0, self.action_num-1)
         else:
             action_index = self.Q_network(state).max(1)[1].item()

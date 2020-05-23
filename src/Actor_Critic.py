@@ -56,20 +56,16 @@ class Actor_Critic():
         self.action_num = action_num
         
         #== PARAM ==
-        self.epsilon = CONFIG.EPSILON
-        self.eps_start = CONFIG.EPSILON
-        self.eps_end = CONFIG.EPSILON_END
-        self.decay = CONFIG.MAX_EP_STEPS
-
-        self.LR_A = CONFIG.LR_A
-        self.LR_A_start = CONFIG.LR_A
-        self.LR_A_end = CONFIG.LR_A_END
-        self.LR_A_decay = CONFIG.MAX_EP_STEPS * CONFIG.MAX_EPISODES / 2
         
         self.LR_C = CONFIG.LR_C
-        self.LR_C_start = CONFIG.LR_C
-        self.LR_C_end = CONFIG.LR_C_END
-        self.LR_C_decay = CONFIG.MAX_EP_STEPS * CONFIG.MAX_EPISODES / 2
+        self.LR_C_START = CONFIG.LR_C
+        self.LR_C_END = CONFIG.LR_C_END
+        self.LR_C_DECAY = CONFIG.MAX_EP_STEPS * CONFIG.MAX_EPISODES / 2
+        
+        self.LR_A = CONFIG.LR_A
+        self.LR_A_START = CONFIG.LR_A
+        self.LR_A_END = CONFIG.LR_A_END
+        self.LR_A_DECAY = CONFIG.MAX_EP_STEPS * CONFIG.MAX_EPISODES / 2
         
         self.BATCH_SIZE = CONFIG.BATCH_SIZE
         self.GAMMA = CONFIG.GAMMA
@@ -109,18 +105,100 @@ class Actor_Critic():
         elif self.training_step % self.HARD_UPDATE == 0:
             #== Hard Replace ==
             self.critic_target.load_state_dict(self.critic.state_dict())
-         
-    def update(self):
-        self.training_step += 1
+    
+    def update_critic(self):
+        if len(self.memory) < self.BATCH_SIZE*10:
+        #if not self.memory.isfull:
+            return
         
         #== EXPERIENCE REPLAY ==
-        transitions = self.memory.memory
+        transitions = self.memory.sample(self.BATCH_SIZE)
         batch = Transition(*zip(*transitions))
-        reward = np.array(batch.r)
+        
+        non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.s_)), 
+                                      device=self.device, dtype=torch.bool)
+        non_final_state_nxt = torch.FloatTensor([s for s in batch.s_ if s is not None], 
+                                                 device=self.device)
+        state = torch.FloatTensor(batch.s, device=self.device)
+        action = torch.LongTensor(batch.a, device=self.device).view(-1,1)
+        reward = torch.FloatTensor(batch.r, device=self.device)
+        
+        #== get V(s) ==
+        state_values = self.critic(state).view(-1)
+        
+        #== get expected value: y = r + gamma * V(s') ==
+        state_value_nxt = torch.zeros(self.BATCH_SIZE, device=self.device)
+        with torch.no_grad():
+            if self.double:
+                Q_expect = self.critic_target(non_final_state_nxt)
+            else:
+                Q_expect = self.critic(non_final_state_nxt)
+        state_value_nxt[non_final_mask] = Q_expect.view(-1)
+        expected_state_values = (state_value_nxt * self.GAMMA) + reward
+        
+        #== regression V(s) -> y ==
+        self.critic.train()
+        loss_critic = smooth_l1_loss(input=state_values, target=expected_state_values.detach())
+        
+        #== backward optimize ==
+        self.critic_opt.zero_grad()
+        loss_critic.backward()
+        self.critic_opt.step()
+        
+        #== Update Target Network ==
+        self.update_critic_target()
+        
+        #== Hyper-Parameter Update ==
+        self.LR_C = self.LR_C_END + (self.LR_C_START - self.LR_C_END) * \
+                                     np.exp(-1. * self.training_step / self.LR_C_DECAY)
+
+        return loss_critic.item()
+    
+    def update_actor(self, reward_record):
 
         R=0
         returns=[]
-        for r in reward[::-1]:
+        for r in reward_record[::-1]:
+            # calculate the discounted value
+            R = r + self.GAMMA * R
+            returns.insert(0, R)
+
+        returns = torch.tensor(returns)
+        returns = (returns - returns.mean()) / (returns.std() + 1e-8)
+
+        loss_actor=[]
+        for (log_prob, value), R in zip(self.actor_memory.memory, returns):
+            advantage = R - value.item()
+
+            loss_actor.append(-log_prob * advantage)
+
+        loss_actor = torch.stack(loss_actor).mean()
+        
+        #== Update Actor ==
+        self.actor_opt.zero_grad()
+        loss_actor.backward()
+        self.actor_opt.step()
+
+        #== Hyper-Parameter Update ==
+        self.LR_A = self.LR_A_END + (self.LR_A_START - self.LR_A_END) * \
+                                     np.exp(-1. * self.training_step / self.LR_A_DECAY)
+
+        return loss_actor.item()
+    
+    def update(self,reward_record):
+        self.training_step += 1
+        
+        loss_critic = self.update_critic()
+        loss_actor = self.update_actor(reward_record)
+
+        return loss_actor, loss_critic
+    '''    
+    def update(self, reward_record):
+        self.training_step += 1
+
+        R=0
+        returns=[]
+        for r in reward_record[::-1]:
             # calculate the discounted value
             R = r + self.GAMMA * R
             returns.insert(0, R)
@@ -131,7 +209,6 @@ class Actor_Critic():
         loss_actor=[]
         loss_critic=[]
         for (log_prob, value), R in zip(self.actor_memory.memory, returns):
-
             advantage = R - value.item()
 
             loss_actor.append(-log_prob * advantage)
@@ -152,14 +229,15 @@ class Actor_Critic():
         self.actor_opt.step()
 
         #== Hyper-Parameter Update ==
-        '''
+
         self.LR_A = self.LR_A_end + (self.LR_A_start - self.LR_A_end) * \
                                      np.exp(-1. * self.training_step / self.LR_A_decay)
         self.LR_C = self.LR_C_end + (self.LR_C_start - self.LR_C_end) * \
                                      np.exp(-1. * self.training_step / self.LR_C_decay)
-        '''
+
         return loss_actor.item(), loss_critic.item()
-       
+    '''
+    
     def select_action(self, state):
         self.critic.train()
         self.actor.train()
