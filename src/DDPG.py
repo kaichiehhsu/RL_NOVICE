@@ -9,6 +9,7 @@ import random
 import numpy as np
 
 from ReplayMemory import ReplayMemory
+from random_process import OrnsteinUhlenbeck
 
 Transition = namedtuple('Transition', ['s', 'a', 'r', 's_'])
 
@@ -50,12 +51,7 @@ class DDPG():
         self.state_dim = state_dim
         self.action_dim = action_dim
         
-        #== PARAM ==
-        self.EPSILON = CONFIG.EPSILON
-        self.EPS_START = CONFIG.EPSILON
-        self.EPS_END = CONFIG.EPSILON_END
-        self.EPS_DECAY = CONFIG.MAX_EP_STEPS
-        
+        #== PARAM ==        
         self.LR_C = CONFIG.LR_C
         self.LR_C_START = CONFIG.LR_C
         self.LR_C_END = CONFIG.LR_C_END
@@ -69,6 +65,8 @@ class DDPG():
         self.BATCH_SIZE = CONFIG.BATCH_SIZE
         self.GAMMA = CONFIG.GAMMA
         self.MAX_MODEL = CONFIG.MAX_MODEL
+        
+        self.SIGMA = CONFIG.SIGMA
 
         #== CRITIC TARGET UPDATE PARAM ==
         self.double = CONFIG.DOUBLE
@@ -83,14 +81,19 @@ class DDPG():
         self.memory = ReplayMemory(CONFIG.MEMORY_CAPACITY)
         self.build_network()
 
+        self.random_process = OrnsteinUhlenbeck(action_dim, sigma=self.SIGMA, annealLen=CONFIG.MAX_EP_STEPS*2, dt=1)
+        self.train = True
+
     def build_network(self):
         self.critic        = critic(self.state_dim, self.action_dim)
         self.critic_target = critic(self.state_dim, self.action_dim)
         self.actor         = actor(self.state_dim,  self.action_dim)
+        self.actor_target  = actor(self.state_dim,  self.action_dim)
         if self.device == torch.device('cuda'):
             self.critic.cuda()
             self.critic_target.cuda()
             self.actor.cuda()
+            self.actor_target.cuda()
 
         #== Optimizer ==
         self.critic_opt = optim.Adam(self.critic.parameters(), lr=self.LR_C)
@@ -107,6 +110,17 @@ class DDPG():
         elif self.training_step % self.HARD_UPDATE == 0:
             #== Hard Replace ==
             self.critic_target.load_state_dict(self.critic.state_dict())
+
+    def update_actor_target(self):
+        if self.SOFT_UPDATE:
+            #== Soft Replace ==
+            for module_tar, module_pol in zip(self.actor_target.modules(), self.actor.modules()):
+                if isinstance(module_tar, nn.Linear):
+                    module_tar.weight.data = (1-self.TAU)*module_tar.weight.data + self.TAU*module_pol.weight.data
+                    module_tar.bias.data   = (1-self.TAU)*module_tar.bias.data   + self.TAU*module_pol.bias.data
+        elif self.training_step % self.HARD_UPDATE == 0:
+            #== Hard Replace ==
+            self.actor_target.load_state_dict(self.actor.state_dict())
 
     def update(self):
         if len(self.memory) < self.BATCH_SIZE*20:
@@ -134,12 +148,11 @@ class DDPG():
         #== get Q_w (s,a) ==
         state_action_values = self.critic(state, action).view(-1)
         
-        #== get a' = mu_theta (s') ==
-        action_nxt = self.actor(non_final_state_nxt)
-        
+        #== get a' = mu_theta' (s') ==
         #== get expected value: y = r + gamma * Q_w' (s',a') ==
         state_value_nxt = torch.zeros(self.BATCH_SIZE, device=self.device)
         with torch.no_grad():
+            action_nxt = self.actor_target(non_final_state_nxt)
             Q_expect = self.critic_target(non_final_state_nxt, action_nxt).view(-1)
         state_value_nxt[non_final_mask] = Q_expect
         expected_state_action_values = (state_value_nxt * self.GAMMA) + reward
@@ -166,23 +179,23 @@ class DDPG():
         loss_actor.backward()
         self.actor_opt.step()
 
+        #== Update Actor Target ==
+        self.update_actor_target()
+
         #== Hyper-Parameter Update ==
         self.LR_C = self.LR_C_END + (self.LR_C_START - self.LR_C_END) * \
                                      np.exp(-1. * self.training_step / self.LR_C_DECAY)
         self.LR_A = self.LR_A_END + (self.LR_A_START - self.LR_A_END) * \
                                      np.exp(-1. * self.training_step / self.LR_A_DECAY)
-        self.EPSILON = self.EPS_END + (self.EPS_START - self.EPS_END) * \
-                                       np.exp(-1. * self.training_step / self.EPS_DECAY)
         
         return loss_actor, loss_critic
     
     def select_action(self, state):
         state = torch.from_numpy(state).float()
-        
-        if random.random() < self.EPSILON:
-            action = random.uniform(-1, 1)
-        else:
-            action = self.actor(state).item()
+        with torch.no_grad():
+            tmp_a = self.actor(state).numpy()
+            noise = self.random_process.sample()
+            action = tmp_a + noise
         return action
 
     def store_transition(self, *args):

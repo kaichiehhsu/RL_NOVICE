@@ -11,7 +11,8 @@ class config():
                         BATCH_SIZE=32,
                         RENDER=False,                         
                         MAX_MODEL=5,
-                        DOUBLE=True):
+                        DOUBLE=True,
+                        SIGMA=0.1):
                 
         self.MAX_EPISODES = MAX_EPISODES
         self.MAX_EP_STEPS = MAX_EP_STEPS
@@ -37,3 +38,5 @@ class config():
         self.MAX_MODEL= MAX_MODEL
         
         self.DOUBLE = DOUBLE
+        
+        self.SIGMA = SIGMA
